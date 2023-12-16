@@ -1,0 +1,100 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.12.0
+  name: kubesyncs.jibutech.com
+spec:
+  group: jibutech.com
+  names:
+    kind: KubeSync
+    listKind: KubeSyncList
+    plural: kubesyncs
+    singular: kubesync
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.srcClusterSecret
+      name: SrcClusterSecret
+      type: string
+    - jsonPath: .spec.dstClusterSecret
+      name: DstClusterSecret
+      type: string
+    - jsonPath: .status.state
+      name: State
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: KubeSync is the Schema for the kubesyncs API
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation
+              of an object. Servers should convert recognized schemas to the latest
+              internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents. Servers may infer this from the endpoint the client
+              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: KubeSyncSpec defines the desired state of KubeSync
+            properties:
+              dstClusterSecret:
+                type: string
+              nsMap:
+                additionalProperties:
+                  type: string
+                type: object
+              pause:
+                type: boolean
+              srcClusterSecret:
+                type: string
+              syncResources:
+                items:
+                  properties:
+                    gvr:
+                      properties:
+                        group:
+                          type: string
+                        resource:
+                          type: string
+                        version:
+                          type: string
+                      type: object
+                    names:
+                      items:
+                        type: string
+                      type: array
+                    namespaces:
+                      items:
+                        type: string
+                      type: array
+                  required:
+                  - gvr
+                  type: object
+                type: array
+            required:
+            - dstClusterSecret
+            - srcClusterSecret
+            - syncResources
+            type: object
+          status:
+            description: KubeSyncStatus defines the observed state of KubeSync
+            properties:
+              state:
+                type: string
+            required:
+            - state
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

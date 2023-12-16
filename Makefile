@@ -4,6 +4,8 @@ IMG ?= controller:latest
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.27.1
 
+DEFAULT_DEPLOY_NS ?= kubesync-system
+
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -108,6 +110,10 @@ ifndef ignore-not-found
   ignore-not-found = false
 endif
 
+set-default-ns:
+	cd config/manager && $(KUSTOMIZE) edit set namespace ${DEFAULT_DEPLOY_NS}
+	cd config/default && $(KUSTOMIZE) edit set namespace ${DEFAULT_DEPLOY_NS}
+
 .PHONY: install
 install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~/.kube/config.
 	$(KUSTOMIZE) build config/crd | $(KUBECTL) apply -f -
@@ -125,6 +131,10 @@ deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in
 undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
+generate-deployment: kustomize set-default-ns ## generate installation crd and deployment
+	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
+	rm -rf deploy && mkdir deploy
+	$(KUSTOMIZE) build config/default -o deploy/
 ##@ Build Dependencies
 
 ## Location to install dependencies to
