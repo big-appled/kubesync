@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -10,6 +11,10 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+
+	jibutechcomv1 "github.com/big-appled/kubesync/api/v1"
+	"github.com/big-appled/kubesync/utils/predicatebase"
 )
 
 type CheckFunc func() (time.Duration, error)
@@ -53,4 +58,40 @@ func EnsureFinalizers(ctx context.Context, obj client.Object, finalizerName stri
 	}
 
 	return &ctrl.Result{}, nil
+}
+
+type KubeSyncSpecPredicate struct {
+	predicatebase.IgnoreAllPredicate
+}
+
+// Create responds the Create events on server startup, a real Create event will be ignored.
+func (p KubeSyncSpecPredicate) Create(e event.CreateEvent) bool {
+	return true
+}
+
+// Update returns true when status is changed.
+func (p KubeSyncSpecPredicate) Update(e event.UpdateEvent) bool {
+	new, ok := e.ObjectNew.(*jibutechcomv1.KubeSync)
+	if !ok {
+		return false
+	}
+	// check if deletion
+	if !new.GetDeletionTimestamp().IsZero() {
+		return true
+	}
+
+	old, ok := e.ObjectOld.(*jibutechcomv1.KubeSync)
+	if !ok {
+		return false
+	}
+
+	if !reflect.DeepEqual(new.Spec, old.Spec) {
+		return true
+	}
+
+	return false
+}
+
+func (p KubeSyncSpecPredicate) Delete(e event.DeleteEvent) bool {
+	return true
 }

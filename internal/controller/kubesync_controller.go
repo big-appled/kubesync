@@ -30,6 +30,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -133,27 +134,7 @@ func (r *KubeSyncReconciler) handleFunction(ctx *KubeSyncRequest, logger logr.Lo
 
 	// Start operation
 	if ks.Spec.Pause {
-		r.mutex.Lock()
-		sig, ok := r.CancelMap[ks.Name]
-		if !ok {
-			logger.Info("cancel chan not found", "ks", ks.Name)
-			return nil
-		}
-
-		logger.Info("send cancel signal to kubesync", "ks", ks.Name)
-		sig.CancelCh <- struct{}{}
-
-		// delete first, otherwise the lock may hold a long time,
-		// if start operation just exits normally, it will try to hold
-		// the lock below, which will cause deadlock
-		delete(r.CancelMap, ks.Name)
-		r.mutex.Unlock()
-
-		// Wait for start signal
-		logger.Info("wait for done signal from main function", "ks", ks.Name)
-		<-sig.DoneCh
-		logger.Info("main function done", "ks", ks.Name)
-
+		r.stop(ks)
 		return nil
 	}
 
@@ -180,6 +161,7 @@ func (r *KubeSyncReconciler) handleFunction(ctx *KubeSyncRequest, logger logr.Lo
 	}
 	r.CancelMap[ks.Name] = sig
 	r.mutex.Unlock()
+	r.Log.Info("start sync", "ks", ks.Name)
 	err := r.run(ks, sig)
 	if err != nil {
 		logger.Error(err, "run function error", "ks", ks.Name)
@@ -235,6 +217,29 @@ func (r *KubeSyncReconciler) run(ks *jibutechcomv1.KubeSync, sig *FuncSignal) er
 	return err
 }
 
+func (r *KubeSyncReconciler) stop(ks *jibutechcomv1.KubeSync) {
+	r.mutex.Lock()
+	sig, ok := r.CancelMap[ks.Name]
+	if !ok {
+		r.Log.Info("cancel chan not found", "ks", ks.Name)
+		return
+	}
+
+	r.Log.Info("send cancel signal to kubesync", "ks", ks.Name)
+	sig.CancelCh <- struct{}{}
+
+	// delete first, otherwise the lock may hold a long time,
+	// if start operation just exits normally, it will try to hold
+	// the lock below, which will cause deadlock
+	delete(r.CancelMap, ks.Name)
+	r.mutex.Unlock()
+
+	// Wait for start signal
+	r.Log.Info("wait for done signal from main function", "ks", ks.Name)
+	<-sig.DoneCh
+	r.Log.Info("main function done", "ks", ks.Name)
+}
+
 func getRestConfig(ns, name string, cl client.Client) (*rest.Config, error) {
 	var err error
 	s := &corev1.Secret{}
@@ -269,7 +274,7 @@ func (r *KubeSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// nolint: errcheck
 	go r.serve(r.chanInput, r.chanDone, logger)
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&jibutechcomv1.KubeSync{}).
+		For(&jibutechcomv1.KubeSync{}, builder.WithPredicates(KubeSyncSpecPredicate{})).
 		Complete(r)
 }
 
@@ -279,6 +284,7 @@ func (r *KubeSyncReconciler) ensureFinalizers(ctx context.Context, instance *jib
 	return EnsureFinalizers(ctx, instance, setting.KubeSyncFinalizer,
 		func() (time.Duration, error) {
 			logger.Info("kube sync finalizer start...")
+			r.stop(instance)
 			return 0, nil
 		},
 		r.Client, logger, true,
