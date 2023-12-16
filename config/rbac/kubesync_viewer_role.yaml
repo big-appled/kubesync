@@ -1,0 +1,27 @@
+# permissions for end users to view kubesyncs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: clusterrole
+    app.kubernetes.io/instance: kubesync-viewer-role
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/created-by: kubesync
+    app.kubernetes.io/part-of: kubesync
+    app.kubernetes.io/managed-by: kustomize
+  name: kubesync-viewer-role
+rules:
+- apiGroups:
+  - jibutech.com.jibutech.com
+  resources:
+  - kubesyncs
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - jibutech.com.jibutech.com
+  resources:
+  - kubesyncs/status
+  verbs:
+  - get

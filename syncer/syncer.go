@@ -1,10 +1,9 @@
-package main
+package syncer
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 
 	jsonpatch "github.com/evanphx/json-patch"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -13,66 +12,14 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/tools/clientcmd"
+	ctrl "sigs.k8s.io/controller-runtime"
 )
 
-func main() {
-	// Read the config file
-	configData, err := os.ReadFile("C://Users/candy/.kube/config")
-	if err != nil {
-		panic(err.Error())
-	}
-	clientConfig, err := clientcmd.NewClientConfigFromBytes(configData)
-	if err != nil {
-		panic(err.Error())
-	}
-	config, err := clientConfig.ClientConfig()
-	if err != nil {
-		panic(err.Error())
-	}
-
-	srcRestConfig := config
-	dstRestCondif := config
-	/*
-		gvr := schema.GroupVersionResource{
-			Group:    "migration.yinhestor.com",
-			Version:  "v1",
-			Resource: "droperationrequests",
-		}
-		ns := "qiming-migration"
-		nsMap := map[string]string{
-			ns: "test1",
-		}
-	*/
-	gvr := schema.GroupVersionResource{
-		Group:    "ys.jibudata.com",
-		Version:  "v1beta1",
-		Resource: "users",
-	}
-	ns := ""
-	var nsMap map[string]string
-
-	// create a channel to receive the event
-	eventChan := make(chan struct{})
-
-	sh := NewSyncHandler(srcRestConfig, dstRestCondif, gvr, ns, nsMap, eventChan)
-
-	err = sh.Sync()
-	if err != nil {
-		panic(err.Error())
-	}
-
-	// wait for the event
-	<-eventChan
-
-	// exit
-	// close(eventChan)
-}
+var log = ctrl.Log.WithName("kube-syncer")
 
 type SyncHandler struct {
 	srcRestConfig *rest.Config
@@ -81,19 +28,24 @@ type SyncHandler struct {
 	ns            string
 	name          string
 	nsMap         map[string]string
-	eventChan     chan struct{}
+	stopCh        <-chan struct{}
 
 	dstClient dynamic.NamespaceableResourceInterface
 }
 
-func NewSyncHandler(srcRestConfig, dstRestConfig *rest.Config, gvr schema.GroupVersionResource, ns string, nsMap map[string]string, eventChan chan struct{}) *SyncHandler {
+func NewSyncHandler(srcRestConfig, dstRestConfig *rest.Config,
+	gvr schema.GroupVersionResource,
+	ns string,
+	nsMap map[string]string,
+	stopCh <-chan struct{},
+) *SyncHandler {
 	return &SyncHandler{
 		srcRestConfig: srcRestConfig,
 		dstRestConfig: dstRestConfig,
 		gvr:           gvr,
 		ns:            ns,
 		nsMap:         nsMap,
-		eventChan:     eventChan,
+		stopCh:        stopCh,
 	}
 }
 
@@ -148,10 +100,11 @@ func (s *SyncHandler) Sync() error {
 	}
 
 	// start the informers
-	go informer.Informer().Run(wait.NeverStop)
+	go func() {
+		informer.Informer().Run(s.stopCh)
+		log.Info("stop informer")
+	}()
 
-	// stop the informers
-	//informer.Informer().
 	return nil
 }
 
@@ -160,7 +113,7 @@ func (s *SyncHandler) create(obj interface{}) error {
 	if !ok {
 		return fmt.Errorf("cannot convert to unstructured, obj: %v", obj)
 	}
-	fmt.Println("resource added:", u.GroupVersionKind(), "name:", u.GetName(), "namespace:", u.GetNamespace())
+	log.Info("resource added:", "group version", u.GroupVersionKind(), "name:", u.GetName(), "namespace:", u.GetNamespace())
 	ns := findNamespace(u.GetNamespace(), s.nsMap)
 	u.SetNamespace(ns)
 	u.SetResourceVersion("")
@@ -168,7 +121,7 @@ func (s *SyncHandler) create(obj interface{}) error {
 
 	_, err := s.dstClient.Namespace(ns).Create(context.TODO(), u, metav1.CreateOptions{})
 	if err != nil && !errors.IsAlreadyExists(err) {
-		fmt.Println("create error", err.Error())
+		log.Error(err, "create error", "group version", u.GroupVersionKind(), "name:", u.GetName(), "namespace:", u.GetNamespace())
 		return err
 	}
 
@@ -208,7 +161,7 @@ func (s *SyncHandler) update(objOld, objNew interface{}) error {
 	if !ok {
 		return fmt.Errorf("cannot convert to unstructured, obj: %v", objNew)
 	}
-	fmt.Println("resource updated:", u.GroupVersionKind(), "name:", u.GetName(), "namespace:", u.GetNamespace())
+	log.Info("resource updated:", "group version", u.GroupVersionKind(), "name:", u.GetName(), "namespace:", u.GetNamespace())
 	ns := findNamespace(u.GetNamespace(), s.nsMap)
 	u.SetNamespace(ns)
 	uu.SetNamespace(ns)
@@ -225,12 +178,12 @@ func (s *SyncHandler) update(objOld, objNew interface{}) error {
 		return err
 	}
 	if data == nil {
-		fmt.Println("no changes")
+		log.Info("no changes", "group version", u.GroupVersionKind(), "name:", u.GetName(), "namespace:", u.GetNamespace())
 		return nil
 	}
 	_, err = s.dstClient.Namespace(ns).Patch(context.TODO(), u.GetName(), types.MergePatchType, data, metav1.PatchOptions{})
 	if err != nil {
-		fmt.Println("update error", err.Error())
+		log.Error(err, "update error", "group version", u.GroupVersionKind(), "name:", u.GetName(), "namespace:", u.GetNamespace())
 		return err
 	}
 	return nil
@@ -244,7 +197,7 @@ func (s *SyncHandler) delete(obj interface{}) error {
 	if s.name != "" && u.GetName() != s.name {
 		return nil
 	}
-	fmt.Println("resource deleted:", u.GroupVersionKind(), "name:", u.GetName(), "namespace:", u.GetNamespace())
+	log.Info("resource deleted:", "group version", u.GroupVersionKind(), "name:", u.GetName(), "namespace:", u.GetNamespace())
 	ns := findNamespace(u.GetNamespace(), s.nsMap)
 	u.SetNamespace(ns)
 

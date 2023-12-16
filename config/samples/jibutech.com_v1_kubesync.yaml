@@ -1,0 +1,12 @@
+apiVersion: jibutech.com.jibutech.com/v1
+kind: KubeSync
+metadata:
+  labels:
+    app.kubernetes.io/name: kubesync
+    app.kubernetes.io/instance: kubesync-sample
+    app.kubernetes.io/part-of: kubesync
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: kubesync
+  name: kubesync-sample
+spec:
+  # TODO(user): Add fields here
